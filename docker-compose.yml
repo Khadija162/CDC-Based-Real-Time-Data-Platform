@@ -1,0 +1,61 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: orders
+      POSTGRES_USER: cdc
+      POSTGRES_PASSWORD: cdc_dev_only
+    command: ["postgres", "-c", "wal_level=logical", "-c", "max_replication_slots=10", "-c", "max_wal_senders=10"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cdc -d orders"]
+      interval: 5s
+      retries: 12
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v24.3.5
+    command: ["redpanda", "start", "--overprovisioned", "--smp", "1", "--memory", "1G", "--reserve-memory", "0M", "--check=false", "--node-id", "0", "--kafka-addr", "internal://0.0.0.0:29092,external://0.0.0.0:9092", "--advertise-kafka-addr", "internal://redpanda:29092,external://localhost:9092"]
+    ports: ["127.0.0.1:9092:9092"]
+  connect:
+    image: quay.io/debezium/connect:2.7
+    environment:
+      BOOTSTRAP_SERVERS: redpanda:29092
+      GROUP_ID: cdc-connect-cluster
+      CONFIG_STORAGE_TOPIC: cdc-connect-configs
+      OFFSET_STORAGE_TOPIC: cdc-connect-offsets
+      STATUS_STORAGE_TOPIC: cdc-connect-status
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redpanda:
+        condition: service_started
+    ports: ["127.0.0.1:8083:8083"]
+  worker:
+    build: .
+    command: ["python", "-m", "cdc.worker"]
+    environment:
+      KAFKA_BOOTSTRAP: redpanda:29092
+      KAFKA_TOPIC: orders.public.orders
+      CDC_STORE: /app/artifacts/cdc.db
+    volumes:
+      - ./artifacts:/app/artifacts
+    depends_on: [redpanda, connect]
+  api:
+    build: .
+    environment:
+      CDC_STORE: /app/artifacts/cdc.db
+      LLM_MODE: mock
+    volumes:
+      - ./artifacts:/app/artifacts:ro
+    ports: ["127.0.0.1:8000:8000"]
+  dashboard:
+    build: .
+    command: ["streamlit", "run", "frontend/app.py", "--server.address", "0.0.0.0", "--server.port", "8501"]
+    environment:
+      API_URL: http://api:8000
+    ports: ["127.0.0.1:8501:8501"]
+    depends_on: [api]
+volumes:
+  pgdata:
