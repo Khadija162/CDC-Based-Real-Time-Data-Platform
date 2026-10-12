@@ -26,6 +26,9 @@ services:
       CONFIG_STORAGE_TOPIC: cdc-connect-configs
       OFFSET_STORAGE_TOPIC: cdc-connect-offsets
       STATUS_STORAGE_TOPIC: cdc-connect-status
+      CONFIG_STORAGE_REPLICATION_FACTOR: '1'
+      OFFSET_STORAGE_REPLICATION_FACTOR: '1'
+      STATUS_STORAGE_REPLICATION_FACTOR: '1'
     depends_on:
       postgres:
         condition: service_healthy
